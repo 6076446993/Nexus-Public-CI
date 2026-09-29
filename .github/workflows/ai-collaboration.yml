@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - name: Resolve current PR head and publish pending status
+      - name: Resolve current project commit and publish pending status
         id: target
         env:
           CI_TOKEN: ${{ secrets.AI_COLLAB_CI_TOKEN }}
@@ -35,8 +35,10 @@ jobs:
           }
           (async () => {
             const pr = await api('/pulls/10');
-            if (pr.state !== 'open' || pr.head.repo.full_name !== repo || !/^[a-f0-9]{40}$/.test(pr.head.sha)) throw new Error('PR target is not the expected open same-repository PR.');
-            const sha = pr.head.sha;
+            if (pr.head.repo.full_name !== repo) throw new Error('Unexpected PR source repository.');
+            const target = pr.state === 'open' ? pr.head.sha : (await api('/branches/main')).commit.sha;
+            if (!/^[a-f0-9]{40}$/.test(target)) throw new Error('Invalid target commit.');
+            const sha = target;
             if (process.env.GITHUB_EVENT_NAME === 'schedule') {
               const previous = await api('/commits/' + sha + '/status');
               if (previous.statuses.some(s => s.context === 'Nexus Public CI' && ['success', 'failure', 'pending'].includes(s.state))) return;
