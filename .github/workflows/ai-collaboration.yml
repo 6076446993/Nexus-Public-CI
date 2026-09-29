@@ -1,6 +1,8 @@
 name: AI Collaboration public CI
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '*/10 * * * *'
   push:
     branches: [main]
     paths: ['.github/workflows/ai-collaboration.yml']
@@ -35,22 +37,29 @@ jobs:
             const pr = await api('/pulls/10');
             if (pr.state !== 'open' || pr.head.repo.full_name !== repo || !/^[a-f0-9]{40}$/.test(pr.head.sha)) throw new Error('PR target is not the expected open same-repository PR.');
             const sha = pr.head.sha;
+            if (process.env.GITHUB_EVENT_NAME === 'schedule') {
+              const previous = await api('/commits/' + sha + '/status');
+              if (previous.statuses.some(s => s.context === 'Nexus Public CI' && ['success', 'failure', 'pending'].includes(s.state))) return;
+            }
             const url = 'https://github.com/' + process.env.GITHUB_REPOSITORY + '/actions/runs/' + process.env.GITHUB_RUN_ID;
             await api('/statuses/' + sha, { state: 'pending', context: 'Nexus Public CI', description: 'Build, tests and production dependency audit running', target_url: url });
             fs.appendFileSync(process.env.GITHUB_OUTPUT, 'sha=' + sha + '\n');
           })().catch(e => { console.error(e.message); process.exit(1); });
           NODE
       - uses: actions/checkout@v4
+        if: steps.target.outputs.sha != ''
         with:
           repository: jonathanblunt1214-lgtm/AI-collaboration-
           ref: ${{ steps.target.outputs.sha }}
           token: ${{ secrets.AI_COLLAB_CI_TOKEN }}
           persist-credentials: false
       - uses: actions/setup-node@v4
+        if: steps.target.outputs.sha != ''
         with:
           node-version: 22.18.0
       - name: Install, build, test and audit private project
         id: verify
+        if: steps.target.outputs.sha != ''
         shell: bash
         run: |
           set -uo pipefail
