@@ -1,0 +1,81 @@
+name: AI Collaboration public CI
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ai-collaboration-pr-10
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Resolve current PR head and publish pending status
+        id: target
+        env:
+          CI_TOKEN: ${{ secrets.AI_COLLAB_CI_TOKEN }}
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const token = process.env.CI_TOKEN;
+          if (!token) { console.error('Configure AI_COLLAB_CI_TOKEN before running private-project CI.'); process.exit(1); }
+          const repo = 'jonathanblunt1214-lgtm/AI-collaboration-';
+          const headers = { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
+          async function api(path, body) {
+            const r = await fetch('https://api.github.com/repos/' + repo + path, { method: body ? 'POST' : 'GET', headers, ...(body ? { body: JSON.stringify(body) } : {}) });
+            if (!r.ok) throw new Error('GitHub API HTTP ' + r.status);
+            return r.json();
+          }
+          (async () => {
+            const pr = await api('/pulls/10');
+            if (pr.state !== 'open' || pr.head.repo.full_name !== repo || !/^[a-f0-9]{40}$/.test(pr.head.sha)) throw new Error('PR target is not the expected open same-repository PR.');
+            const sha = pr.head.sha;
+            const url = 'https://github.com/' + process.env.GITHUB_REPOSITORY + '/actions/runs/' + process.env.GITHUB_RUN_ID;
+            await api('/statuses/' + sha, { state: 'pending', context: 'Nexus Public CI', description: 'Build, tests and production dependency audit running', target_url: url });
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'sha=' + sha + '\n');
+          })().catch(e => { console.error(e.message); process.exit(1); });
+          NODE
+      - uses: actions/checkout@v4
+        with:
+          repository: jonathanblunt1214-lgtm/AI-collaboration-
+          ref: ${{ steps.target.outputs.sha }}
+          token: ${{ secrets.AI_COLLAB_CI_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.18.0
+      - name: Install, build, test and audit private project
+        id: verify
+        shell: bash
+        run: |
+          set -uo pipefail
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          for command in 'npm ci' 'npm run check' 'npm audit --omit=dev --audit-level=high'; do
+            if bash -c "$command" > "$log" 2>&1; then
+              printf '%s: passed\n' "$command"
+            else
+              printf '%s: failed; private output withheld from public logs\n' "$command"
+              exit 1
+            fi
+          done
+      - name: Publish result on the exact tested commit
+        if: always() && steps.target.outputs.sha != ''
+        env:
+          CI_TOKEN: ${{ secrets.AI_COLLAB_CI_TOKEN }}
+          TESTED_SHA: ${{ steps.target.outputs.sha }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+          JOB_OUTCOME: ${{ job.status }}
+        shell: bash
+        run: |
+          node <<'NODE'
+          const state = process.env.VERIFY_OUTCOME === 'success' && process.env.JOB_OUTCOME === 'success' ? 'success' : 'failure';
+          const url = 'https://github.com/' + process.env.GITHUB_REPOSITORY + '/actions/runs/' + process.env.GITHUB_RUN_ID;
+          fetch('https://api.github.com/repos/jonathanblunt1214-lgtm/AI-collaboration-/statuses/' + process.env.TESTED_SHA, {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + process.env.CI_TOKEN, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
+            body: JSON.stringify({ state, context: 'Nexus Public CI', description: state === 'success' ? 'Build, tests and production audit passed' : 'Private-project verification did not pass', target_url: url })
+          }).then(r => { if (!r.ok) throw new Error('Status publication HTTP ' + r.status); }).catch(e => { console.error(e.message); process.exit(1); });
+          NODE
