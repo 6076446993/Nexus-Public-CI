@@ -1,0 +1,19 @@
+name: Public runner proof
+on:
+  push:
+    paths:
+      - '.github/workflows/runner-proof.yml'
+  workflow_dispatch:
+permissions: {}
+jobs:
+  prove:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Verify actual hosted execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_OS" = Linux
+          printf 'Public hosted runner executed successfully.\n'
+          printf '## Public runner proof\n\nA standard Linux runner executed. No private source, secrets, caches, or artifacts were used.\n' >> "$GITHUB_STEP_SUMMARY"
