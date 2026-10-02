@@ -9,7 +9,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: ai-collaboration-pr-10
+  group: ai-collaboration-main
   cancel-in-progress: false
 jobs:
   check:
@@ -42,9 +42,7 @@ jobs:
             return r.json();
           }
           (async () => {
-            const pr = await api('/pulls/10');
-            if (pr.head.repo.full_name !== repo) throw new Error('Unexpected PR source repository.');
-            const target = pr.state === 'open' ? pr.head.sha : (await api('/branches/main')).commit.sha;
+            const target = (await api('/branches/main')).commit.sha;
             if (!/^[a-f0-9]{40}$/.test(target)) throw new Error('Invalid target commit.');
             const sha = target;
             if (process.env.GITHUB_EVENT_NAME === 'schedule') {
